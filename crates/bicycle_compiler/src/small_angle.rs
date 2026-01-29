@@ -16,13 +16,14 @@ use core::str;
 use std::{
     collections::HashMap,
     io::{self, ErrorKind},
-    process::Command,
     sync::{LazyLock, Mutex},
 };
 
 use bicycle_common::Pauli;
 use log::{debug, trace};
 use regex::Regex;
+use rsgridsynth::config::config_from_theta_epsilon;
+use rsgridsynth::gridsynth::gridsynth_gates;
 
 use crate::language::AnglePrecision;
 
@@ -74,8 +75,8 @@ pub fn synthesize_angle(
     debug!("Synthesizing angle: {theta}");
 
     // Do I need scientific notation here? E.g. for the accuracy.
-    let gates = run_gridsynth(&theta.to_string(), &accuracy.to_string())
-        .expect("gridsynth should run successfully. Is it installed? See README.");
+    let gates = run_gridsynth(theta, accuracy)
+        .expect("rsgridsynth should run successfully. Is it installed? See README.");
     let res =
         compile_rots(&gates).expect("Should be able to parse MA normal form provided by gridsynth");
 
@@ -100,20 +101,18 @@ pub fn synthesize_angle_x(
     (rots, cliff)
 }
 
-fn run_gridsynth(angle: &str, accuracy: &str) -> Result<String, io::Error> {
-    dbg!(angle);
-    dbg!(accuracy);
-    let cmd = Command::new("gridsynth")
-        .arg("-p") // Ignore global phase
-        .args(["--epsilon", accuracy])
-        // Use "--" to ensure negative angles are not interpreted as arguments
-        .args(["--", angle])
-        .output()?;
-
-    let mut output = cmd.stdout;
-    output.truncate(output.len() - 1);
-
-    String::from_utf8(output).map_err(|err| io::Error::new(ErrorKind::InvalidData, err.to_string()))
+fn run_gridsynth(theta: AnglePrecision, accuracy: AnglePrecision) -> Result<String, io::Error> {
+    let theta_f64 = theta.to_num::<f64>();
+    let accuracy_f64 = accuracy.to_num::<f64>();
+    let mut config = config_from_theta_epsilon(theta_f64, accuracy_f64, 1, false, true);
+    let result = gridsynth_gates(&mut config);
+    if result.gates.is_empty() {
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "rsgridsynth returned an empty gate sequence",
+        ));
+    }
+    Ok(result.gates)
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -246,20 +245,6 @@ mod test {
     use std::error::Error;
 
     use super::*;
-
-    // #[test]
-    // fn test_05_minus3() -> Result<(), Box<dyn Error>> {
-    //     let test_str = "THTHTSHTSHTHTHTHTHTHTHTHTHTHTHTHTSHTHTHTSHTHTSHTHTHTSHTHTHTHTHTSHTHTSSS";
-    //     let res = run_gridsynth("0.5", "1e-3")?;
-
-    //     // The exact sequence is not stable, but T count is.
-    //     assert_eq!(
-    //         test_str.chars().filter(|c| c == &'T').count(),
-    //         res.chars().filter(|c| c == &'T').count()
-    //     );
-
-    //     Ok(())
-    // }
 
     #[test]
     fn parse_ma_form_t_start() -> Result<(), Box<dyn Error>> {
